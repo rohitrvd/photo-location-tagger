@@ -1,0 +1,48 @@
+# API keys — never commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Personal photo folders and videos
+Test/
+Travel Diaries/
+*.mp4
+*.MP4
+*.mov
+*.MOV
+
+# Photos and personal data
+*.jpg
+*.jpeg
+*.JPG
+*.JPEG
+*.heic
+*.HEIC
+*.png
+*.PNG
+
+# App output
+enriched/
+**/enriched/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

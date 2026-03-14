@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Photo Location Tagger</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #f0f4f8;
+  color: #1e293b;
+  min-height: 100vh;
+  padding: 40px 20px;
+}
+
+.container {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.5px;
+}
+
+header p {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 1rem;
+}
+
+.card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 36px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 8px 24px rgba(0,0,0,0.04);
+}
+
+.view { display: none; }
+.view.active { display: block; }
+
+/* ---- Setup ---- */
+.field { margin-bottom: 20px; }
+.field label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.field input[type="text"] {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  color: #1e293b;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.field input[type="text"]:focus { border-color: #3b82f6; }
+
+.field-hint {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-top: 5px;
+}
+
+.field-count {
+  font-size: 0.85rem;
+  color: #10b981;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.field-error {
+  font-size: 0.85rem;
+  color: #ef4444;
+  margin-top: 6px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+
+.checkbox-row label {
+  font-size: 0.9rem;
+  color: #374151;
+  cursor: pointer;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 28px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+
+.btn-primary {
+  background: #3b82f6;
+  color: #fff;
+  width: 100%;
+  padding: 14px;
+  font-size: 1rem;
+}
+
+.btn-primary:hover { background: #2563eb; }
+.btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+
+.btn-secondary {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.btn-secondary:hover { background: #e2e8f0; }
+
+.btn-success {
+  background: #10b981;
+  color: #fff;
+}
+
+.btn-success:hover { background: #059669; }
+
+/* ---- Processing ---- */
+.processing-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.processing-header h2 { font-size: 1.1rem; font-weight: 600; }
+.processing-header span { font-size: 0.875rem; color: #64748b; }
+
+.progress-bar-track {
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 28px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #6366f1);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+  width: 0%;
+}
+
+.photo-feed {
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.photo-feed::-webkit-scrollbar { width: 4px; }
+.photo-feed::-webkit-scrollbar-track { background: #f1f5f9; }
+.photo-feed::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+
+.feed-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.feed-icon { font-size: 1rem; flex-shrink: 0; }
+.feed-filename { color: #1e293b; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed-location { color: #64748b; font-size: 0.8rem; flex-shrink: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.stats-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.stat-box {
+  flex: 1;
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+}
+
+.stat-box .stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.stat-box .stat-label {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* ---- Tagging ---- */
+.tagging-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.tagging-header h2 { font-size: 1.1rem; font-weight: 600; }
+.tag-counter {
+  font-size: 0.85rem;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+
+.photo-preview {
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #f1f5f9;
+  margin-bottom: 24px;
+}
+
+.photo-filename {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  text-align: center;
+  margin-top: -18px;
+  margin-bottom: 20px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.tag-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.tag-actions .btn-success { flex: 1; }
+.tag-actions .btn-secondary { flex: 0 0 auto; }
+
+/* ---- Results ---- */
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.result-stat {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.result-stat .rs-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.result-stat .rs-label {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+.result-stat.highlight .rs-value { color: #3b82f6; }
+
+.locations-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 12px;
+}
+
+.location-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.9rem;
+}
+
+.location-row:last-child { border-bottom: none; }
+.location-name { color: #1e293b; }
+.location-count {
+  font-size: 0.8rem;
+  background: #eff6ff;
+  color: #3b82f6;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.results-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.results-actions .btn { flex: 1; }
+
+.enriched-path {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  text-align: center;
+  margin-top: 16px;
+  word-break: break-all;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Photo Location Tagger</h1>
+    <p>Automatically identify and annotate locations in your travel photos using AI</p>
+  </header>
+
+  <!-- VIEW: SETUP -->
+  <div id="view-setup" class="view active">
+    <div class="card">
+      <div class="field">
+        <label for="folder-input">Photos Folder</label>
+        <input type="text" id="folder-input" placeholder="e.g. C:\Users\YourName\Pictures\Vacation 2024" />
+        <div class="field-hint">Enter the full path to your photos folder</div>
+        <div id="folder-count" class="field-count" style="display:none"></div>
+        <div id="folder-error" class="field-error" style="display:none"></div>
+      </div>
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="save-enriched" checked />
+        <label for="save-enriched">Save annotated photos to an <strong>enriched/</strong> subfolder (recommended)</label>
+      </div>
+
+      <button class="btn btn-primary" id="start-btn" disabled onclick="startProcessing()">
+        Start Processing
+      </button>
+    </div>
+  </div>
+
+  <!-- VIEW: PROCESSING -->
+  <div id="view-processing" class="view">
+    <div class="card">
+      <div class="processing-header">
+        <h2 id="processing-title">Analyzing photos...</h2>
+        <span id="processing-count">0 / 0</span>
+      </div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+      <div class="photo-feed" id="photo-feed"></div>
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-value" id="stat-identified">0</div>
+          <div class="stat-label">Identified</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="stat-unknown">0</div>
+          <div class="stat-label">Unknown</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="stat-failed">0</div>
+          <div class="stat-label">Failed</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="stat-cost">$0.00</div>
+          <div class="stat-label">Est. Cost</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VIEW: TAGGING -->
+  <div id="view-tagging" class="view">
+    <div class="card">
+      <div class="tagging-header">
+        <h2>Tag Unidentified Photos</h2>
+        <span class="tag-counter" id="tag-counter">1 of 3</span>
+      </div>
+      <img id="tag-photo" class="photo-preview" src="" alt="Photo to tag" />
+      <div class="photo-filename" id="tag-filename"></div>
+      <div class="field">
+        <label for="tag-name">Location Name</label>
+        <input type="text" id="tag-name" placeholder="e.g. Niagara Falls, Times Square" />
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="tag-city">City</label>
+          <input type="text" id="tag-city" placeholder="e.g. New York" />
+        </div>
+        <div class="field">
+          <label for="tag-country">Country</label>
+          <input type="text" id="tag-country" placeholder="e.g. USA" />
+        </div>
+      </div>
+      <div class="tag-actions">
+        <button class="btn btn-success" onclick="submitTag()">Save &amp; Next</button>
+        <button class="btn btn-secondary" onclick="skipTag()">Skip</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- VIEW: RESULTS -->
+  <div id="view-results" class="view">
+    <div class="card">
+      <div class="results-grid">
+        <div class="result-stat">
+          <div class="rs-value" id="res-total">0</div>
+          <div class="rs-label">Photos Processed</div>
+        </div>
+        <div class="result-stat highlight">
+          <div class="rs-value" id="res-identified-pct">0%</div>
+          <div class="rs-label">Locations Identified</div>
+        </div>
+        <div class="result-stat">
+          <div class="rs-value" id="res-failed">0</div>
+          <div class="rs-label">Failed</div>
+        </div>
+        <div class="result-stat">
+          <div class="rs-value" id="res-cost">$0.00</div>
+          <div class="rs-label">API Cost</div>
+        </div>
+      </div>
+
+      <div id="top-locations-section" style="display:none">
+        <div class="locations-title">Top Locations</div>
+        <div id="top-locations-list"></div>
+      </div>
+
+      <div class="results-actions">
+        <button class="btn btn-primary" onclick="processAnother()">Process Another Folder</button>
+      </div>
+      <div class="enriched-path" id="res-path"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let totalPhotos = 0;
+let completedPhotos = 0;
+let identifiedCount = 0;
+let unknownCount = 0;
+let failedCount = 0;
+let totalInputTokens = 0;
+let totalOutputTokens = 0;
+
+// Debounce folder input
+let scanTimer = null;
+document.getElementById('folder-input').addEventListener('input', function() {
+  clearTimeout(scanTimer);
+  const val = this.value.trim();
+  document.getElementById('folder-count').style.display = 'none';
+  document.getElementById('folder-error').style.display = 'none';
+  document.getElementById('start-btn').disabled = true;
+
+  if (!val) return;
+  scanTimer = setTimeout(() => scanFolder(val), 600);
+});
+
+async function scanFolder(folder) {
+  try {
+    const res = await fetch('/api/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({folder})
+    });
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('folder-error').textContent = data.error;
+      document.getElementById('folder-error').style.display = 'block';
+    } else {
+      document.getElementById('folder-count').textContent = `Found ${data.count} photo${data.count !== 1 ? 's' : ''}`;
+      document.getElementById('folder-count').style.display = 'block';
+      document.getElementById('start-btn').disabled = data.count === 0;
+    }
+  } catch(e) {
+    document.getElementById('folder-error').textContent = 'Could not reach server';
+    document.getElementById('folder-error').style.display = 'block';
+  }
+}
+
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+async function startProcessing() {
+  const folder = document.getElementById('folder-input').value.trim();
+  const saveToEnriched = document.getElementById('save-enriched').checked;
+
+  showView('view-processing');
+  resetProcessingStats();
+
+  const res = await fetch('/api/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({folder, save_to_enriched: saveToEnriched})
+  });
+  const data = await res.json();
+  if (data.error) {
+    alert(data.error);
+    showView('view-setup');
+    return;
+  }
+
+  totalPhotos = data.total;
+  document.getElementById('processing-count').textContent = `0 / ${totalPhotos}`;
+
+  const evtSource = new EventSource('/api/events');
+  evtSource.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    handleEvent(msg, evtSource);
+  };
+}
+
+function resetProcessingStats() {
+  completedPhotos = 0; identifiedCount = 0; unknownCount = 0;
+  failedCount = 0; totalInputTokens = 0; totalOutputTokens = 0;
+  document.getElementById('photo-feed').innerHTML = '';
+  document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('stat-identified').textContent = '0';
+  document.getElementById('stat-unknown').textContent = '0';
+  document.getElementById('stat-failed').textContent = '0';
+  document.getElementById('stat-cost').textContent = '$0.00';
+}
+
+function handleEvent(msg, evtSource) {
+  if (msg.type === 'ping') return;
+
+  if (msg.type === 'photo_done') {
+    completedPhotos = msg.completed;
+    const pct = Math.round((completedPhotos / msg.total) * 100);
+    document.getElementById('progress-fill').style.width = pct + '%';
+    document.getElementById('processing-count').textContent = `${completedPhotos} / ${msg.total}`;
+
+    const isIdentified = msg.confidence === 'high' || msg.confidence === 'medium';
+    if (msg.status === 'failed') failedCount++;
+    else if (isIdentified && msg.location) identifiedCount++;
+    else unknownCount++;
+
+    document.getElementById('stat-identified').textContent = identifiedCount;
+    document.getElementById('stat-unknown').textContent = unknownCount;
+    document.getElementById('stat-failed').textContent = failedCount;
+
+    const feed = document.getElementById('photo-feed');
+    const item = document.createElement('div');
+    item.className = 'feed-item';
+    const icon = msg.status === 'failed' ? '❌' : (isIdentified && msg.location ? '📍' : '❓');
+    const loc = msg.location || 'Unknown location';
+    item.innerHTML = `<span class="feed-icon">${icon}</span><span class="feed-filename">${msg.file}</span><span class="feed-location">${loc}</span>`;
+    feed.appendChild(item);
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  if (msg.type === 'tagging_start') {
+    evtSource.close();
+    document.getElementById('processing-title').textContent = 'Processing complete!';
+    setTimeout(() => startTagging(), 800);
+  }
+
+  if (msg.type === 'done') {
+    evtSource.close();
+    document.getElementById('processing-title').textContent = 'Processing complete!';
+    setTimeout(() => showResults(msg.summary), 800);
+  }
+
+  if (msg.type === 'error') {
+    evtSource.close();
+    alert('Error: ' + msg.message);
+    showView('view-setup');
+  }
+}
+
+async function startTagging() {
+  showView('view-tagging');
+  await loadNextTag();
+}
+
+async function loadNextTag() {
+  const res = await fetch('/api/next_tag');
+  const data = await res.json();
+
+  if (data.done) {
+    showResults(data.summary);
+    return;
+  }
+
+  document.getElementById('tag-counter').textContent = `${data.index + 1} of ${data.total}`;
+  document.getElementById('tag-filename').textContent = data.filename;
+  document.getElementById('tag-photo').src = `/api/image?path=${encodeURIComponent(data.source_path)}&t=${Date.now()}`;
+  document.getElementById('tag-name').value = '';
+  document.getElementById('tag-city').value = '';
+  document.getElementById('tag-country').value = '';
+  document.getElementById('tag-name').focus();
+}
+
+async function submitTag() {
+  const name = document.getElementById('tag-name').value.trim();
+  const city = document.getElementById('tag-city').value.trim();
+  const country = document.getElementById('tag-country').value.trim();
+
+  const res = await fetch('/api/submit_tag', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, city, country})
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  if (data.all_done) { showResults(data.summary); return; }
+  await loadNextTag();
+}
+
+async function skipTag() {
+  const res = await fetch('/api/submit_tag', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: '', city: '', country: ''})
+  });
+  const data = await res.json();
+  if (data.all_done) { showResults(data.summary); return; }
+  await loadNextTag();
+}
+
+function showResults(summary) {
+  showView('view-results');
+  document.getElementById('res-total').textContent = summary.total;
+  document.getElementById('res-identified-pct').textContent = summary.identified_pct + '%';
+  document.getElementById('res-failed').textContent = summary.failed;
+  document.getElementById('res-cost').textContent = '$' + summary.cost.toFixed(4);
+  document.getElementById('res-path').textContent = 'Saved to: ' + summary.enriched_dir;
+
+  const section = document.getElementById('top-locations-section');
+  const list = document.getElementById('top-locations-list');
+  list.innerHTML = '';
+  if (summary.top_locations && summary.top_locations.length > 0) {
+    section.style.display = 'block';
+    summary.top_locations.forEach(loc => {
+      const row = document.createElement('div');
+      row.className = 'location-row';
+      row.innerHTML = `<span class="location-name">${loc.name}</span><span class="location-count">${loc.count} photo${loc.count !== 1 ? 's' : ''}</span>`;
+      list.appendChild(row);
+    });
+  } else {
+    section.style.display = 'none';
+  }
+}
+
+function processAnother() {
+  document.getElementById('folder-input').value = '';
+  document.getElementById('folder-count').style.display = 'none';
+  document.getElementById('start-btn').disabled = true;
+  showView('view-setup');
+}
+
+// Allow Enter key in tag inputs to submit
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && document.getElementById('view-tagging').classList.contains('active')) {
+    submitTag();
+  }
+});
+</script>
+</body>
+</html>
