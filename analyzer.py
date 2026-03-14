@@ -6,14 +6,74 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 from google.api_core import exceptions as google_exceptions
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ExifTags
 import pillow_heif
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 pillow_heif.register_heif_opener()
 
 GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_PRO_MODEL = "gemini-2.5-pro"
 MAX_IMAGE_DIM = 8000
+
+
+def _extract_gps(path: Path) -> str | None:
+    """Extract GPS coordinates from EXIF data. Returns 'lat, lon' string or None."""
+    try:
+        exif = None
+        try:
+            with Image.open(path) as img:
+                exif = img.getexif()
+        except Exception:
+            pass
+
+        if exif is None and path.suffix.lower() == ".heic":
+            try:
+                heif_file = pillow_heif.open_heif(str(path))
+                exif_bytes = heif_file.info.get("exif")
+                if exif_bytes:
+                    exif = Image.Exif()
+                    exif.load(exif_bytes)
+            except Exception:
+                pass
+
+        if not exif:
+            return None
+
+        gps_info_tag = 34853  # GPSInfo IFD pointer
+        gps_ifd = exif.get_ifd(gps_info_tag)
+        if not gps_ifd:
+            return None
+
+        # GPS tag IDs
+        GPS_LAT_REF  = 1
+        GPS_LAT      = 2
+        GPS_LON_REF  = 4
+        GPS_LON      = 3
+
+        lat_ref  = gps_ifd.get(GPS_LAT_REF)
+        lat_dms  = gps_ifd.get(GPS_LAT)
+        lon_ref  = gps_ifd.get(GPS_LON_REF)
+        lon_dms  = gps_ifd.get(GPS_LON)
+
+        if not (lat_ref and lat_dms and lon_ref and lon_dms):
+            return None
+
+        def dms_to_decimal(dms):
+            d, m, s = dms
+            return float(d) + float(m) / 60 + float(s) / 3600
+
+        lat = dms_to_decimal(lat_dms)
+        lon = dms_to_decimal(lon_dms)
+        if lat_ref == "S":
+            lat = -lat
+        if lon_ref == "W":
+            lon = -lon
+
+        return f"{lat:.6f}, {lon:.6f}"
+    except Exception:
+        return None
+
 
 # Primary prompt — comprehensive location identification
 ANALYSIS_PROMPT = """You are a travel photo location identifier. Examine this image carefully and identify the location using ALL available clues:
@@ -96,8 +156,20 @@ class ImageAnalyzer:
         try:
             image_bytes = self._load_image_bytes(image_path)
 
+            # Build prompt — inject GPS coordinates if available
+            gps = _extract_gps(image_path)
+            if gps:
+                gps_hint = (
+                    f"\n\nIMPORTANT: This photo's GPS coordinates are {gps}. "
+                    "Use these coordinates to identify the exact location. "
+                    "Set confidence to 'high' since GPS data is definitive."
+                )
+                prompt = ANALYSIS_PROMPT + gps_hint
+            else:
+                prompt = ANALYSIS_PROMPT
+
             # First pass
-            response = await self._call_api(image_bytes, ANALYSIS_PROMPT)
+            response = await self._call_api(image_bytes, prompt)
             data = self._parse_response(response.text)
             validated = self._validate_response(data)
             usage = response.usage_metadata
@@ -105,10 +177,12 @@ class ImageAnalyzer:
             output_tokens = getattr(usage, "candidates_token_count", 0) or 0
 
             # Second pass if first returned low confidence with no useful location info
+            # Skip second pass if GPS was provided — the model had definitive data
             loc = validated["location"]
             has_useful_info = loc.get("popular_name") or loc.get("landmark") or loc.get("city")
-            if loc.get("confidence") == "low" and not has_useful_info:
-                response2 = await self._call_api(image_bytes, RETRY_PROMPT)
+            if loc.get("confidence") == "low" and not has_useful_info and not gps:
+                retry_prompt = RETRY_PROMPT
+                response2 = await self._call_api(image_bytes, retry_prompt)
                 data2 = self._parse_response(response2.text)
                 validated2 = self._validate_response(data2)
                 usage2 = response2.usage_metadata
@@ -119,6 +193,21 @@ class ImageAnalyzer:
                 loc2 = validated2["location"]
                 if loc2.get("popular_name") or loc2.get("landmark") or loc2.get("city"):
                     validated = validated2
+
+            # Third pass with Pro model if still no useful info
+            loc = validated["location"]
+            has_useful_info = loc.get("popular_name") or loc.get("landmark") or loc.get("city")
+            if loc.get("confidence") == "low" and not has_useful_info and not gps:
+                response3 = await self._call_api_pro(image_bytes, prompt)
+                data3 = self._parse_response(response3.text)
+                validated3 = self._validate_response(data3)
+                usage3 = response3.usage_metadata
+                input_tokens += getattr(usage3, "prompt_token_count", 0) or 0
+                output_tokens += getattr(usage3, "candidates_token_count", 0) or 0
+
+                loc3 = validated3["location"]
+                if loc3.get("popular_name") or loc3.get("landmark") or loc3.get("city"):
+                    validated = validated3
 
             return {
                 "success": True,
@@ -176,6 +265,23 @@ class ImageAnalyzer:
         image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
         return await self._client.aio.models.generate_content(
             model=GEMINI_MODEL,
+            contents=[image_part, prompt],
+            config=types.GenerateContentConfig(
+                max_output_tokens=1024,
+                temperature=0,
+            ),
+        )
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(min=4, max=60),
+        retry=retry_if_exception_type(_RETRYABLE),
+        reraise=True,
+    )
+    async def _call_api_pro(self, image_bytes: bytes, prompt: str):
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+        return await self._client.aio.models.generate_content(
+            model=GEMINI_PRO_MODEL,
             contents=[image_part, prompt],
             config=types.GenerateContentConfig(
                 max_output_tokens=1024,
