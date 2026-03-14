@@ -352,6 +352,151 @@ header p {
   margin-top: 16px;
   word-break: break-all;
 }
+
+/* ---- Edit Tags ---- */
+.edit-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  gap: 12px;
+}
+
+.edit-toolbar h2 { font-size: 1.1rem; font-weight: 600; flex: 1; }
+
+.edit-search {
+  padding: 8px 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.875rem;
+  outline: none;
+  width: 220px;
+  transition: border-color 0.15s;
+}
+.edit-search:focus { border-color: #3b82f6; }
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.photo-grid::-webkit-scrollbar { width: 4px; }
+.photo-grid::-webkit-scrollbar-track { background: #f1f5f9; }
+.photo-grid::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+
+.photo-tile {
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f1f5f9;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  position: relative;
+}
+
+.photo-tile:hover { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+
+.photo-tile img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+
+.photo-tile-label {
+  font-size: 0.72rem;
+  padding: 5px 7px;
+  color: #374151;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: #fff;
+}
+
+.photo-tile-label.unlabeled { color: #94a3b8; font-style: italic; }
+
+.tile-badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.tile-badge.identified { background: #dcfce7; color: #15803d; }
+.tile-badge.unidentified { background: #fef9c3; color: #854d0e; }
+.tile-badge.failed { background: #fee2e2; color: #b91c1c; }
+
+/* ---- Edit Modal ---- */
+.modal-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal-backdrop.open { display: flex; }
+
+.modal {
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px;
+  width: 100%;
+  max-width: 520px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  animation: modalIn 0.2s ease;
+}
+
+@keyframes modalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: none; } }
+
+.modal-photo {
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #f1f5f9;
+  margin-bottom: 16px;
+}
+
+.modal-filename {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  text-align: center;
+  margin-bottom: 18px;
+  margin-top: -10px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.modal-actions .btn-success { flex: 1; }
+.modal-actions .btn-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: none;
+  padding: 12px 18px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.modal-actions .btn-danger:hover { background: #fca5a5; }
+.modal-actions .btn-secondary { flex: 0 0 auto; }
 </style>
 </head>
 <body>
@@ -473,9 +618,49 @@ header p {
       </div>
 
       <div class="results-actions">
+        <button class="btn btn-secondary" onclick="openEditView()">Edit Tags</button>
         <button class="btn btn-primary" onclick="processAnother()">Process Another Folder</button>
       </div>
       <div class="enriched-path" id="res-path"></div>
+    </div>
+  </div>
+
+  <!-- VIEW: EDIT TAGS -->
+  <div id="view-edit" class="view">
+    <div class="card">
+      <div class="edit-toolbar">
+        <h2>Edit Location Tags</h2>
+        <input type="text" class="edit-search" id="edit-search" placeholder="Search photos..." oninput="filterGrid()" />
+        <button class="btn btn-secondary" onclick="showView('view-results')">Back</button>
+      </div>
+      <div class="photo-grid" id="photo-grid"></div>
+    </div>
+  </div>
+
+  <!-- EDIT MODAL -->
+  <div class="modal-backdrop" id="edit-modal" onclick="closeModal(event)">
+    <div class="modal">
+      <img id="modal-photo" class="modal-photo" src="" alt="" />
+      <div class="modal-filename" id="modal-filename"></div>
+      <div class="field">
+        <label for="modal-name">Location Name</label>
+        <input type="text" id="modal-name" placeholder="e.g. Eiffel Tower, Grand Canyon" />
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="modal-city">City</label>
+          <input type="text" id="modal-city" placeholder="e.g. Paris" />
+        </div>
+        <div class="field">
+          <label for="modal-country">Country</label>
+          <input type="text" id="modal-country" placeholder="e.g. France" />
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-success" onclick="saveEdit()">Save</button>
+        <button class="btn btn-danger" onclick="clearEdit()" title="Remove tag">Remove Tag</button>
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      </div>
     </div>
   </div>
 </div>
@@ -702,7 +887,114 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'Enter' && document.getElementById('view-tagging').classList.contains('active')) {
     submitTag();
   }
+  if (e.key === 'Enter' && document.getElementById('edit-modal').classList.contains('open')) {
+    saveEdit();
+  }
+  if (e.key === 'Escape') closeModal();
 });
+
+// ---- Edit Tags ----
+let allResults = [];
+let editingFilename = null;
+
+async function openEditView() {
+  showView('view-edit');
+  document.getElementById('edit-search').value = '';
+  const res = await fetch('/api/results');
+  const data = await res.json();
+  allResults = data.results;
+  renderGrid(allResults);
+}
+
+function renderGrid(results) {
+  const grid = document.getElementById('photo-grid');
+  grid.innerHTML = '';
+  results.forEach(r => {
+    const tile = document.createElement('div');
+    tile.className = 'photo-tile';
+    tile.dataset.filename = r.filename;
+
+    const badgeClass = r.status === 'failed' ? 'failed' : (r.location_name ? 'identified' : 'unidentified');
+    const badgeText = r.status === 'failed' ? 'failed' : (r.location_name ? 'tagged' : 'untagged');
+    const labelClass = r.location_name ? '' : 'unlabeled';
+    const labelText = r.location_name || 'No location';
+
+    // Show annotated output if exists, else source
+    const imgPath = r.output_path || r.source_path;
+
+    tile.innerHTML = `
+      <img src="/api/image?path=${encodeURIComponent(imgPath)}&t=${Date.now()}" alt="${r.filename}" loading="lazy" />
+      <span class="tile-badge ${badgeClass}">${badgeText}</span>
+      <div class="photo-tile-label ${labelClass}">${labelText}</div>
+    `;
+    tile.onclick = () => openEditModal(r);
+    grid.appendChild(tile);
+  });
+}
+
+function filterGrid() {
+  const q = document.getElementById('edit-search').value.toLowerCase();
+  const filtered = allResults.filter(r =>
+    r.filename.toLowerCase().includes(q) ||
+    r.location_name.toLowerCase().includes(q) ||
+    (r.city || '').toLowerCase().includes(q) ||
+    (r.country || '').toLowerCase().includes(q)
+  );
+  renderGrid(filtered);
+}
+
+function openEditModal(r) {
+  editingFilename = r.filename;
+  const imgPath = r.output_path || r.source_path;
+  document.getElementById('modal-photo').src = `/api/image?path=${encodeURIComponent(imgPath)}&t=${Date.now()}`;
+  document.getElementById('modal-filename').textContent = r.filename;
+  document.getElementById('modal-name').value = r.location_name || '';
+  document.getElementById('modal-city').value = r.city || '';
+  document.getElementById('modal-country').value = r.country || '';
+  document.getElementById('edit-modal').classList.add('open');
+  setTimeout(() => document.getElementById('modal-name').focus(), 50);
+}
+
+function closeModal(event) {
+  if (event && event.target !== document.getElementById('edit-modal')) return;
+  document.getElementById('edit-modal').classList.remove('open');
+  editingFilename = null;
+}
+
+async function saveEdit() {
+  if (!editingFilename) return;
+  const name = document.getElementById('modal-name').value.trim();
+  const city = document.getElementById('modal-city').value.trim();
+  const country = document.getElementById('modal-country').value.trim();
+
+  const res = await fetch('/api/edit_tag', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({filename: editingFilename, name, city, country})
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+
+  // Update local cache
+  const r = allResults.find(x => x.filename === editingFilename);
+  if (r) {
+    r.location_name = data.location_name;
+    r.city = city;
+    r.country = country;
+    if (data.output_path) r.output_path = data.output_path;
+  }
+
+  document.getElementById('edit-modal').classList.remove('open');
+  editingFilename = null;
+  filterGrid();
+}
+
+async function clearEdit() {
+  if (!editingFilename) return;
+  if (!confirm('Remove the location tag from this photo?')) return;
+  document.getElementById('modal-name').value = '';
+  await saveEdit();
+}
 </script>
 </body>
 </html>

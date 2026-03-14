@@ -403,6 +403,76 @@ def api_submit_tag():
     return jsonify({"ok": True, "all_done": False})
 
 
+@app.route("/api/results")
+def api_results():
+    results = _job.get("results", [])
+    enriched_dir = _job.get("enriched_dir", "")
+    out = []
+    for r in results:
+        loc = r.get("location") or {}
+        out.append({
+            "filename": r["filename"],
+            "source_path": r["source_path"],
+            "output_path": r.get("output_path", ""),
+            "status": r.get("status"),
+            "location_name": loc.get("popular_name") or loc.get("landmark") or "",
+            "city": loc.get("city") or "",
+            "country": loc.get("country") or "",
+            "confidence": loc.get("confidence", "low"),
+        })
+    return jsonify({"results": out, "enriched_dir": enriched_dir})
+
+
+@app.route("/api/edit_tag", methods=["POST"])
+def api_edit_tag():
+    data = request.json
+    filename = data.get("filename", "")
+    name = data.get("name", "").strip()
+    city = data.get("city", "").strip() or None
+    country = data.get("country", "").strip() or None
+
+    # Find the result
+    target = None
+    for r in _job["results"]:
+        if r["filename"] == filename:
+            target = r
+            break
+    if not target:
+        return jsonify({"error": "Photo not found"}), 404
+
+    if name:
+        location_data = {
+            "city": city, "region": None, "country": country,
+            "landmark": name, "popular_name": name,
+            "location_type": "unknown", "confidence": "high",
+        }
+        placement_data = {"recommendation": "bottom-center"}
+        source_path = Path(target["source_path"])
+        output_path = get_output_path(source_path, Path(_job["enriched_dir"]))
+        try:
+            annotate_image(source_path, output_path, location_data, placement_data)
+            target["location"] = location_data
+            target["placement"] = placement_data
+            target["output_path"] = str(output_path)
+            target["status"] = "success"
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    else:
+        # Clearing a tag — mark as no location
+        if target.get("location"):
+            target["location"]["popular_name"] = None
+            target["location"]["landmark"] = None
+            target["location"]["confidence"] = "low"
+
+    write_outputs(_job["results"], _job["enriched_dir"])
+    loc = target.get("location") or {}
+    return jsonify({
+        "ok": True,
+        "location_name": loc.get("popular_name") or loc.get("landmark") or "",
+        "output_path": target.get("output_path", ""),
+    })
+
+
 @app.route("/api/image")
 def api_image():
     from PIL import ImageOps
