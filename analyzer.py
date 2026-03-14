@@ -6,25 +6,31 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 from google.api_core import exceptions as google_exceptions
-from PIL import Image
+from PIL import Image, ImageOps
 import pillow_heif
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-# Register HEIF opener at module level (idempotent)
 pillow_heif.register_heif_opener()
 
 GEMINI_MODEL = "gemini-2.5-flash"
 MAX_IMAGE_DIM = 8000
 
-ANALYSIS_PROMPT = """Analyze this image and identify the location and best text placement.
-Return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:
+# Primary prompt — comprehensive location identification
+ANALYSIS_PROMPT = """You are a travel photo location identifier. Examine this image carefully and identify the location using ALL available clues:
+
+1. READ ALL TEXT visible in the image — signs, banners, plaques, shop names, street signs, monument inscriptions. These are the strongest clues.
+2. RECOGNIZE landmarks — famous buildings, monuments, natural wonders, skylines, bridges, towers.
+3. USE CONTEXT — architectural style, vegetation, vehicles, clothing, language of visible text, geographic features.
+4. MAKE YOUR BEST GUESS — even if not 100% certain, provide your best identification with an appropriate confidence level. Only use confidence "low" if you have absolutely no idea.
+
+Return ONLY a valid JSON object (no markdown, no explanation):
 {
   "location": {
     "city": "city name or null",
     "region": "state/province/region or null",
     "country": "country name or null",
-    "landmark": "specific landmark name or null",
-    "popular_name": "well-known name tourists would recognize or null",
+    "landmark": "specific landmark or place name or null",
+    "popular_name": "the most recognizable name a tourist would use or null",
     "location_type": "landmark|nature|urban|rural|indoor|unknown",
     "confidence": "high|medium|low"
   },
@@ -32,13 +38,46 @@ Return ONLY a valid JSON object (no markdown, no explanation) with this exact st
     "recommendation": "top-left|top-right|bottom-left|bottom-right|top-center|bottom-center",
     "reasoning": "brief explanation",
     "subject_position": "where the main subject is",
-    "quiet_regions": ["list of regions with minimal visual content"]
+    "quiet_regions": ["regions with minimal visual content"]
   },
   "tags": ["5 to 8 descriptive tags"]
 }
 
-If location cannot be determined, use null for location fields and set confidence to "low".
-Choose placement recommendation to avoid covering the main subject."""
+Confidence guide:
+- "high": you are confident — clear landmark, readable sign, or unmistakable location
+- "medium": reasonable guess based on visual clues — use this instead of low when you have any supporting evidence
+- "low": genuinely no identifiable information whatsoever
+
+Choose placement to avoid covering the main subject."""
+
+# Second-pass prompt used when first pass returns low confidence
+RETRY_PROMPT = """Look very carefully at this photo again. Focus specifically on:
+- Any text, words, or numbers visible anywhere in the image (signs, labels, inscriptions, watermarks)
+- Any distinctive architectural features, natural formations, or landmarks
+- Any flags, logos, or symbols that indicate a country or region
+- The style of buildings, roads, vehicles that might indicate a country
+
+Even a partial location (just a country, or just a region) is better than nothing. If you can identify anything at all, use confidence "medium".
+
+Return ONLY a valid JSON object (no markdown):
+{
+  "location": {
+    "city": "city name or null",
+    "region": "state/province/region or null",
+    "country": "country name or null",
+    "landmark": "specific landmark or null",
+    "popular_name": "recognizable tourist name or null",
+    "location_type": "landmark|nature|urban|rural|indoor|unknown",
+    "confidence": "high|medium|low"
+  },
+  "placement": {
+    "recommendation": "top-left|top-right|bottom-left|bottom-right|top-center|bottom-center",
+    "reasoning": "brief explanation",
+    "subject_position": "where the main subject is",
+    "quiet_regions": []
+  },
+  "tags": ["5 to 8 descriptive tags"]
+}"""
 
 _RETRYABLE = (
     google_exceptions.ResourceExhausted,
@@ -53,21 +92,41 @@ class ImageAnalyzer:
         self._client = genai.Client(api_key=api_key)
 
     async def analyze(self, image_path: Path) -> dict:
-        """Analyze an image and return location/placement data with token counts."""
+        """Analyze an image, with a second pass if first returns low confidence."""
         try:
             image_bytes = self._load_image_bytes(image_path)
-            response = await self._call_api(image_bytes)
-            response_text = response.text
-            data = self._parse_response(response_text)
+
+            # First pass
+            response = await self._call_api(image_bytes, ANALYSIS_PROMPT)
+            data = self._parse_response(response.text)
             validated = self._validate_response(data)
             usage = response.usage_metadata
+            input_tokens = getattr(usage, "prompt_token_count", 0) or 0
+            output_tokens = getattr(usage, "candidates_token_count", 0) or 0
+
+            # Second pass if first returned low confidence with no useful location info
+            loc = validated["location"]
+            has_useful_info = loc.get("popular_name") or loc.get("landmark") or loc.get("city")
+            if loc.get("confidence") == "low" and not has_useful_info:
+                response2 = await self._call_api(image_bytes, RETRY_PROMPT)
+                data2 = self._parse_response(response2.text)
+                validated2 = self._validate_response(data2)
+                usage2 = response2.usage_metadata
+                input_tokens += getattr(usage2, "prompt_token_count", 0) or 0
+                output_tokens += getattr(usage2, "candidates_token_count", 0) or 0
+
+                # Use second pass result only if it's more informative
+                loc2 = validated2["location"]
+                if loc2.get("popular_name") or loc2.get("landmark") or loc2.get("city"):
+                    validated = validated2
+
             return {
                 "success": True,
                 "location": validated["location"],
                 "placement": validated["placement"],
                 "tags": validated["tags"],
-                "input_tokens": getattr(usage, "prompt_token_count", 0) or 0,
-                "output_tokens": getattr(usage, "candidates_token_count", 0) or 0,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
             }
         except google_exceptions.InvalidArgument as e:
             return {"success": False, "error": f"Invalid request: {e}", "input_tokens": 0, "output_tokens": 0}
@@ -75,22 +134,26 @@ class ImageAnalyzer:
             return {"success": False, "error": str(e), "input_tokens": 0, "output_tokens": 0}
 
     def _load_image_bytes(self, path: Path) -> bytes:
-        """Load image as JPEG bytes, handling HEIC and resizing if needed."""
         suffix = path.suffix.lower()
         if suffix == ".heic":
-            heif_file = pillow_heif.open_heif(str(path))
-            img = Image.frombytes(heif_file.mode, heif_file.size, heif_file.data, "raw")
+            try:
+                heif_file = pillow_heif.open_heif(str(path))
+                img = Image.frombytes(heif_file.mode, heif_file.size, heif_file.data, "raw")
+            except Exception:
+                # File has .heic extension but is actually JPEG or another format
+                img = Image.open(path)
+                img.load()
         else:
             img = Image.open(path)
             img.load()
 
+        img = ImageOps.exif_transpose(img)
         if img.mode not in ("RGB", "RGBA"):
             img = img.convert("RGB")
         if img.mode == "RGBA":
             img = img.convert("RGB")
 
         img = self._resize_if_needed(img)
-
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=90)
         buf.seek(0)
@@ -109,15 +172,14 @@ class ImageAnalyzer:
         retry=retry_if_exception_type(_RETRYABLE),
         reraise=True,
     )
-    async def _call_api(self, image_bytes: bytes):
-        """Call Gemini Vision API with retry logic."""
+    async def _call_api(self, image_bytes: bytes, prompt: str):
         image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
         return await self._client.aio.models.generate_content(
             model=GEMINI_MODEL,
-            contents=[image_part, ANALYSIS_PROMPT],
+            contents=[image_part, prompt],
             config=types.GenerateContentConfig(
                 max_output_tokens=1024,
-                temperature=0.1,
+                temperature=0,
             ),
         )
 

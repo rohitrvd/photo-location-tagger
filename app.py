@@ -194,18 +194,64 @@ def make_summary(results):
     }
 
 
+def load_cached_results(enriched_dir: Path) -> dict:
+    """Load previously identified results from photo_data.json keyed by filename."""
+    json_path = enriched_dir / "photo_data.json"
+    if not json_path.exists():
+        return {}
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            data = json.load(f)
+        # Only keep results that were successfully identified with a name
+        return {
+            r["filename"]: r for r in data
+            if r.get("status") == "success"
+            and (r.get("location", {}).get("popular_name") or r.get("location", {}).get("landmark"))
+        }
+    except Exception:
+        return {}
+
+
 def processing_thread(folder_str, enriched_dir_str, api_key):
     try:
-        results = asyncio.run(run_processing(Path(folder_str), Path(enriched_dir_str), api_key))
+        enriched_dir = Path(enriched_dir_str)
+        cached = load_cached_results(enriched_dir)
+
+        # Filter out already-identified images
+        all_images = _job["images"]
+        images_to_process = [img for img in all_images if img.name not in cached]
+        skipped_results = list(cached.values())
+
+        # Update total to reflect only what needs processing
+        _job["total"] = len(images_to_process)
+        _job["images"] = images_to_process
+
+        # Emit skip events for cached photos so UI progress is accurate
+        for r in skipped_results:
+            loc = r.get("location") or {}
+            push_event({
+                "type": "photo_done",
+                "file": r["filename"],
+                "status": "success",
+                "location": loc.get("popular_name") or loc.get("landmark") or "",
+                "confidence": loc.get("confidence", "high"),
+                "completed": _job["completed"],
+                "total": len(all_images),
+            })
+            _job["completed"] += 1
+
+        new_results = asyncio.run(run_processing(Path(folder_str), enriched_dir, api_key))
+        results = skipped_results + new_results
         with _job_lock:
             _job["results"] = results
+            _job["total"] = len(all_images)
             unidentified = [
                 r for r in results
                 if r.get("status") == "success"
-                and r.get("location", {}).get("confidence") == "low"
-                and not r["location"].get("popular_name")
-                and not r["location"].get("landmark")
-                and not r["location"].get("city")
+                and not (
+                    r.get("location", {}).get("popular_name")
+                    or r.get("location", {}).get("landmark")
+                )
             ]
             unidentified.sort(key=lambda r: r["filename"])
             _job["unidentified"] = unidentified
@@ -256,12 +302,16 @@ def api_start():
     if not images:
         return jsonify({"error": "No images found in folder"}), 400
 
+    cached = load_cached_results(enriched_dir)
+    images_to_process = [img for img in images if img.name not in cached]
+    display_total = len(images)
+
     with _job_lock:
         _job.update({
             "status": "processing",
             "images": images,
             "results": [],
-            "total": len(images),
+            "total": display_total,
             "completed": 0,
             "enriched_dir": str(enriched_dir),
             "unidentified": [],
@@ -275,7 +325,7 @@ def api_start():
         daemon=True,
     ).start()
 
-    return jsonify({"status": "started", "total": len(images)})
+    return jsonify({"status": "started", "total": display_total, "cached": len(cached), "to_process": len(images_to_process)})
 
 
 @app.route("/api/events")
@@ -355,19 +405,28 @@ def api_submit_tag():
 
 @app.route("/api/image")
 def api_image():
+    from PIL import ImageOps
     path = request.args.get("path", "")
     try:
         p = Path(path)
         if not p.exists():
             return "Not found", 404
         if p.suffix.lower() == ".heic":
-            heif_file = pillow_heif.open_heif(str(p))
-            img = Image.frombytes(heif_file.mode, heif_file.size, heif_file.data, "raw")
-            buf = io.BytesIO()
-            img.convert("RGB").save(buf, format="JPEG", quality=85)
-            buf.seek(0)
-            return Response(buf.read(), mimetype="image/jpeg")
-        return send_file(str(p))
+            try:
+                heif_file = pillow_heif.open_heif(str(p))
+                img = Image.frombytes(heif_file.mode, heif_file.size, heif_file.data, "raw")
+            except Exception:
+                img = Image.open(p)
+                img.load()
+        else:
+            img = Image.open(p)
+            img.load()
+        img = ImageOps.exif_transpose(img)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        buf.seek(0)
+        return Response(buf.read(), mimetype="image/jpeg")
     except Exception as e:
         return str(e), 500
 

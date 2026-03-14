@@ -2,7 +2,7 @@ import shutil
 from pathlib import Path
 
 import pillow_heif
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 pillow_heif.register_heif_opener()
 
@@ -38,6 +38,7 @@ def annotate_image(
         return
 
     with Image.open(image_path) as img:
+        img = ImageOps.exif_transpose(img)
         if img.mode == "P":
             img = img.convert("RGBA")
         elif img.mode not in ("RGB", "RGBA"):
@@ -215,14 +216,25 @@ def _copy_file(src: Path, dst: Path) -> None:
             return
         except Exception:
             pass
+        try:
+            # Fallback: file may be JPEG with wrong extension
+            img = Image.open(src)
+            img.load()
+            img.convert("RGB").save(str(dst), format="JPEG", quality=95)
+            return
+        except Exception:
+            pass
     shutil.copy2(str(src), str(dst))
 
 
 def _copy_exif(source_path: Path, output_path: Path) -> None:
     try:
         if source_path.suffix.lower() == ".heic":
-            heif_file = pillow_heif.open_heif(str(source_path))
-            exif_bytes = heif_file.info.get("exif")
+            try:
+                heif_file = pillow_heif.open_heif(str(source_path))
+                exif_bytes = heif_file.info.get("exif")
+            except Exception:
+                exif_bytes = None
         else:
             with Image.open(source_path) as src:
                 exif_bytes = src.getexif().tobytes()
