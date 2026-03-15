@@ -170,7 +170,7 @@ class ImageAnalyzer:
 
             # First pass
             response = await self._call_api(image_bytes, prompt)
-            data = self._parse_response(response.text)
+            data = self._parse_response(self._get_response_text(response))
             validated = self._validate_response(data)
             usage = response.usage_metadata
             input_tokens = getattr(usage, "prompt_token_count", 0) or 0
@@ -181,9 +181,8 @@ class ImageAnalyzer:
             loc = validated["location"]
             has_useful_info = loc.get("popular_name") or loc.get("landmark") or loc.get("city")
             if loc.get("confidence") == "low" and not has_useful_info and not gps:
-                retry_prompt = RETRY_PROMPT
-                response2 = await self._call_api(image_bytes, retry_prompt)
-                data2 = self._parse_response(response2.text)
+                response2 = await self._call_api(image_bytes, RETRY_PROMPT)
+                data2 = self._parse_response(self._get_response_text(response2))
                 validated2 = self._validate_response(data2)
                 usage2 = response2.usage_metadata
                 input_tokens += getattr(usage2, "prompt_token_count", 0) or 0
@@ -199,7 +198,7 @@ class ImageAnalyzer:
             has_useful_info = loc.get("popular_name") or loc.get("landmark") or loc.get("city")
             if loc.get("confidence") == "low" and not has_useful_info and not gps:
                 response3 = await self._call_api_pro(image_bytes, prompt)
-                data3 = self._parse_response(response3.text)
+                data3 = self._parse_response(self._get_response_text(response3))
                 validated3 = self._validate_response(data3)
                 usage3 = response3.usage_metadata
                 input_tokens += getattr(usage3, "prompt_token_count", 0) or 0
@@ -289,7 +288,18 @@ class ImageAnalyzer:
             ),
         )
 
-    def _parse_response(self, text: str) -> dict:
+    def _get_response_text(self, response) -> str | None:
+        """Safely extract text from a Gemini response, returning None if empty/blocked."""
+        try:
+            text = response.text
+            return text if text else None
+        except Exception:
+            # response.text raises if the response was blocked or has no candidates
+            return None
+
+    def _parse_response(self, text: str | None) -> dict:
+        if not text:
+            return {}
         text = text.strip()
         try:
             return json.loads(text)
