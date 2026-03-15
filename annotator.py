@@ -233,13 +233,23 @@ def _copy_exif(source_path: Path, output_path: Path) -> None:
             try:
                 heif_file = pillow_heif.open_heif(str(source_path))
                 exif_bytes = heif_file.info.get("exif")
+                if exif_bytes:
+                    exif = Image.Exif()
+                    exif.load(exif_bytes)
+                else:
+                    exif = Image.Exif()
             except Exception:
-                exif_bytes = None
+                exif = Image.Exif()
         else:
             with Image.open(source_path) as src:
-                exif_bytes = src.getexif().tobytes()
-        if exif_bytes:
-            with Image.open(output_path) as out:
-                out.save(str(output_path), format="JPEG", quality=95, exif=exif_bytes)
+                exif = src.getexif()
+
+        # The output image pixels are already correctly oriented (exif_transpose was applied).
+        # Reset the orientation tag to 1 (normal) so viewers don't rotate again.
+        ORIENTATION_TAG = 274
+        exif[ORIENTATION_TAG] = 1
+
+        with Image.open(output_path) as out:
+            out.save(str(output_path), format="JPEG", quality=95, exif=exif.tobytes())
     except Exception:
         pass
