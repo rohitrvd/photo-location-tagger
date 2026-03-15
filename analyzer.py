@@ -266,8 +266,11 @@ class ImageAnalyzer:
             model=GEMINI_MODEL,
             contents=[image_part, prompt],
             config=types.GenerateContentConfig(
-                max_output_tokens=1024,
+                max_output_tokens=4096,
                 temperature=0,
+                # Disable thinking for Flash — it consumes output token budget
+                # leaving too little room for the JSON response
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
 
@@ -283,7 +286,7 @@ class ImageAnalyzer:
             model=GEMINI_PRO_MODEL,
             contents=[image_part, prompt],
             config=types.GenerateContentConfig(
-                max_output_tokens=1024,
+                max_output_tokens=4096,
                 temperature=0,
             ),
         )
